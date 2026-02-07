@@ -1,0 +1,11 @@
+[versions]
+commons-imaging = "1.0.0-alpha6"
+flatlaf = "3.7"
+junit-jupiter = "5.13.4"
+twelvemonkeys = "3.13.0"
+
+[libraries]
+commons-imaging = { module = "org.apache.commons:commons-imaging", version.ref = "commons-imaging" }
+flatlaf = { module = "com.formdev:flatlaf", version.ref = "flatlaf" }
+junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit-jupiter" }
+twelvemonkeys-imageio-psd = { module = "com.twelvemonkeys.imageio:imageio-psd", version.ref = "twelvemonkeys" }

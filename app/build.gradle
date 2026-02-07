@@ -1,0 +1,74 @@
+plugins {
+    id 'application'
+}
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation libs.commons.imaging
+    implementation libs.flatlaf
+    implementation libs.twelvemonkeys.imageio.psd
+
+    testImplementation libs.junit.jupiter
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+application {
+    mainClass = 'com.composegif.ComposeGifApp'
+    applicationDefaultJvmArgs = [
+        '-Xmx256m',
+        '-XX:+UseZGC',
+        '-Dsun.java2d.opengl=true'
+    ]
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
+
+// --- Distribution: fat JAR + jlink runtime ---
+
+tasks.named('jar') {
+    archiveFileName = 'composegif.jar'
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    manifest {
+        attributes 'Main-Class': 'com.composegif.ComposeGifApp'
+    }
+    from(configurations.runtimeClasspath.filter { it.name.endsWith('jar') }.collect { zipTree(it) })
+}
+
+def createRuntime = tasks.register('createRuntime', Exec) {
+    mustRunAfter 'clean'
+    doFirst {
+        delete layout.buildDirectory.dir('runtime')
+    }
+    def runtimePath = layout.buildDirectory.dir('runtime').get().asFile.absolutePath
+    def jlinkPath = "${System.getenv('JRE_TARGET')}/bin/jlink"
+    workingDir = project.projectDir
+    commandLine(
+        jlinkPath,
+        '--add-modules', 'java.se,java.base,java.desktop,jdk.unsupported,jdk.crypto.ec',
+        '--strip-debug',
+        '--no-header-files',
+        '--no-man-pages',
+        '--vm=server',
+        '--compress=2',
+        '--output', runtimePath
+    )
+}
+
+tasks.named('jar') {
+    mustRunAfter createRuntime
+}
+
+tasks.register('dist') {
+    dependsOn 'clean', createRuntime, 'jar'
+}
