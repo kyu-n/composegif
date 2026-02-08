@@ -45,13 +45,15 @@ tasks.named('jar') {
     from(configurations.runtimeClasspath.filter { it.name.endsWith('jar') }.collect { zipTree(it) })
 }
 
+def runtimeDir = layout.buildDirectory.dir('runtime')
+
 def createRuntime = tasks.register('createRuntime', Exec) {
     mustRunAfter 'clean'
-    doFirst {
-        delete layout.buildDirectory.dir('runtime')
-    }
-    def runtimePath = layout.buildDirectory.dir('runtime').get().asFile.absolutePath
+    def runtimePath = runtimeDir.get().asFile.absolutePath
     def jlinkPath = "${System.getenv('JRE_TARGET')}/bin/jlink"
+    doFirst {
+        delete runtimeDir
+    }
     workingDir = project.projectDir
     commandLine(
         jlinkPath,
