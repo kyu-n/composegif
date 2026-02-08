@@ -42,35 +42,36 @@ tasks.named('jar') {
     manifest {
         attributes 'Main-Class': 'com.composegif.ComposeGifApp'
     }
-    from(configurations.runtimeClasspath.filter { it.name.endsWith('jar') }.collect { zipTree(it) })
+    from {
+        configurations.runtimeClasspath.filter { it.name.endsWith('jar') }.collect { zipTree(it) }
+    }
 }
 
 def runtimeDir = layout.buildDirectory.dir('runtime')
+def jreTarget = providers.environmentVariable('JRE_TARGET')
 
 def createRuntime = tasks.register('createRuntime', Exec) {
-    mustRunAfter 'clean'
-    def runtimePath = runtimeDir.get().asFile.absolutePath
-    def jlinkPath = "${System.getenv('JRE_TARGET')}/bin/jlink"
+    dependsOn 'clean'
     doFirst {
-        delete runtimeDir
+        runtimeDir.get().asFile.deleteDir()
     }
-    workingDir = project.projectDir
+    workingDir = layout.projectDirectory.asFile
     commandLine(
-        jlinkPath,
+        jreTarget.map { "${it}/bin/jlink" }.get(),
         '--add-modules', 'java.se,java.base,java.desktop,jdk.unsupported,jdk.crypto.ec',
         '--strip-debug',
         '--no-header-files',
         '--no-man-pages',
         '--vm=server',
         '--compress=2',
-        '--output', runtimePath
+        '--output', runtimeDir.get().asFile.absolutePath
     )
 }
 
 tasks.named('jar') {
-    mustRunAfter createRuntime
+    dependsOn createRuntime
 }
 
 tasks.register('dist') {
-    dependsOn 'clean', createRuntime, 'jar'
+    dependsOn 'jar'
 }
