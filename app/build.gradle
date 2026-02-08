@@ -51,7 +51,6 @@ def runtimeDir = layout.buildDirectory.dir('runtime')
 def jreTarget = providers.environmentVariable('JRE_TARGET')
 
 def createRuntime = tasks.register('createRuntime', Exec) {
-    dependsOn 'clean'
     doFirst {
         runtimeDir.get().asFile.deleteDir()
     }
@@ -68,10 +67,6 @@ def createRuntime = tasks.register('createRuntime', Exec) {
     )
 }
 
-tasks.named('jar') {
-    dependsOn createRuntime
-}
-
 tasks.register('dist') {
-    dependsOn 'jar'
+    dependsOn 'jar', createRuntime
 }
