@@ -43,8 +43,12 @@ import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.Callable;
+import java.util.function.Consumer;
 
 public class MainFrame extends JFrame
 {
@@ -458,6 +462,100 @@ public class MainFrame extends JFrame
 		updatePreview();
 	}
 
+	// --- Background worker utility ---
+
+	/**
+	 * Runs a task off-EDT with wait cursor and standardized error handling.
+	 */
+	private <T> void runBackground(Callable<T> task,
+		Consumer<T> onSuccess, String errorTitle)
+	{
+		setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
+		new SwingWorker<T, Void>()
+		{
+			@Override
+			protected T doInBackground() throws Exception
+			{
+				return task.call();
+			}
+
+			@Override
+			protected void done()
+			{
+				setCursor(Cursor.getDefaultCursor());
+				try
+				{
+					onSuccess.accept(get());
+				}
+				catch (Exception ex)
+				{
+					Throwable cause = ex.getCause() != null ? ex.getCause() : ex;
+					if (cause instanceof OutOfMemoryError)
+					{
+						JOptionPane.showMessageDialog(MainFrame.this,
+							"Not enough memory to complete this operation.\n"
+								+ "Try importing fewer frames or use smaller images.",
+							"Out of Memory", JOptionPane.ERROR_MESSAGE);
+					}
+					else
+					{
+						JOptionPane.showMessageDialog(MainFrame.this,
+							cause.getMessage(), errorTitle, JOptionPane.ERROR_MESSAGE);
+					}
+				}
+			}
+		}.execute();
+	}
+
+	// --- Import result handling ---
+
+	/**
+	 * Routes imported frames to loadAsFrames or loadAsLayers based on mode.
+	 * Logs all warnings and computes most-common delay for FRAMES mode.
+	 */
+	private void handleImportedFrames(List<ImportedFrame> frames, ImportMode mode)
+	{
+		for (ImportedFrame f : frames)
+		{
+			for (String w : f.warnings())
+			{
+				System.out.println("[warn] " + w);
+			}
+		}
+
+		List<FrameLoader.FrameData> frameDataList = frames.stream()
+			.map(ImportedFrame::frame)
+			.toList();
+
+		if (mode == ImportMode.FRAMES)
+		{
+			int delayMs = computeMostCommonDelay(frames);
+			loadAsFrames(frameDataList, delayMs);
+		}
+		else
+		{
+			loadAsLayers(frames);
+		}
+	}
+
+	private static int computeMostCommonDelay(List<ImportedFrame> frames)
+	{
+		var delayCounts = new LinkedHashMap<Integer, Integer>();
+		for (ImportedFrame f : frames)
+		{
+			if (f.delayMs() > 0)
+			{
+				delayCounts.merge(f.delayMs(), 1, Integer::sum);
+			}
+		}
+		return delayCounts.entrySet().stream()
+			.max(Map.Entry.comparingByValue())
+			.map(Map.Entry::getKey)
+			.orElse(-1);
+	}
+
+	// --- PSD import ---
+
 	private void importPsd()
 	{
 		JFileChooser chooser = new JFileChooser();
@@ -472,126 +570,60 @@ public class MainFrame extends JFrame
 		File psdFile = chooser.getSelectedFile();
 		lastDirectory = psdFile.getParentFile();
 
-		// Parse tree off-EDT to avoid blocking UI on file I/O
-		setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
-		new SwingWorker<PsdImporter.PsdTree, Void>()
-		{
-			@Override
-			protected PsdImporter.PsdTree doInBackground() throws Exception
-			{
-				return PsdImporter.parseTree(psdFile);
-			}
-
-			@Override
-			protected void done()
-			{
-				setCursor(Cursor.getDefaultCursor());
-				PsdImporter.PsdTree tree;
-				try
-				{
-					tree = get();
-				}
-				catch (Exception ex)
-				{
-					Throwable cause = ex.getCause() != null ? ex.getCause() : ex;
-					JOptionPane.showMessageDialog(MainFrame.this,
-							cause.getMessage(), "PSD Error", JOptionPane.ERROR_MESSAGE);
-					return;
-				}
-
-				importPsdWithTree(tree, psdFile.getName());
-			}
-		}.execute();
+		runBackground(
+			() -> PsdImporter.parseTree(psdFile),
+			tree -> importPsdWithTree(tree, psdFile.getName()),
+			"PSD Error");
 	}
 
 	private void importPsdWithTree(PsdImporter.PsdTree tree, String filename)
 	{
+		BaseImportDialog.ImportResult<PsdNode> result;
 		try
 		{
-			PsdImportDialog.ImportResult result = PsdImportDialog.show(this, tree, filename);
-			if (result == null)
-			{
-				try { tree.close(); } catch (IOException ignored) {}
-				return;
-			}
-
-			List<PsdNode> selectedNodes = result.selectedNodes();
-			PsdImportDialog.ImportMode mode = result.mode();
-
-			// Flatten and quantize off-EDT with wait cursor
-			setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
-			new SwingWorker<List<PsdImportFrame>, Void>()
-			{
-				@Override
-				protected List<PsdImportFrame> doInBackground() throws Exception
-				{
-					List<PsdImportFrame> frames = new ArrayList<>();
-					for (PsdNode node : selectedNodes)
-					{
-						PsdImporter.FlattenedFrame flat = PsdImporter.flattenNode(tree, node);
-						FrameLoader.QuantizeResult qr = FrameLoader.quantizeToIndexed(flat.image());
-						frames.add(new PsdImportFrame(node.name, qr, flat.warnings()));
-					}
-					return frames;
-				}
-
-				@Override
-				protected void done()
-				{
-					setCursor(Cursor.getDefaultCursor());
-					try
-					{
-						List<PsdImportFrame> frames = get();
-						tree.close();
-
-						for (PsdImportFrame pf : frames)
-						{
-							for (String w : pf.warnings())
-							{
-								System.out.println("[warn] " + w);
-							}
-						}
-
-						List<FrameLoader.FrameData> frameDataList = frames.stream()
-							.map(pf -> new FrameLoader.FrameData(
-								pf.quantized().image(), pf.quantized().transparentIndex()))
-							.toList();
-
-						if (mode == PsdImportDialog.ImportMode.FRAMES)
-						{
-							loadAsFrames(frameDataList, -1);
-						}
-						else
-						{
-							List<NamedFrameData> named = new ArrayList<>();
-							for (int i = 0; i < frames.size(); i++)
-							{
-								named.add(new NamedFrameData(frames.get(i).name(), frameDataList.get(i)));
-							}
-							loadAsLayers(named);
-						}
-					}
-					catch (Exception ex)
-					{
-						try { tree.close(); } catch (IOException ignored) {}
-						Throwable cause = ex.getCause() != null ? ex.getCause() : ex;
-						JOptionPane.showMessageDialog(MainFrame.this,
-								"PSD import failed: " + cause.getMessage(),
-								"Import Error", JOptionPane.ERROR_MESSAGE);
-					}
-				}
-			}.execute();
+			result = PsdImportDialog.show(this, tree, filename);
 		}
 		catch (Exception ex)
 		{
 			try { tree.close(); } catch (IOException ignored) {}
 			JOptionPane.showMessageDialog(this,
-					"PSD import failed: " + ex.getMessage(),
-					"Import Error", JOptionPane.ERROR_MESSAGE);
+				"PSD import failed: " + ex.getMessage(),
+				"Import Error", JOptionPane.ERROR_MESSAGE);
+			return;
 		}
-	}
 
-	private record PsdImportFrame(String name, FrameLoader.QuantizeResult quantized, List<String> warnings) {}
+		if (result == null)
+		{
+			try { tree.close(); } catch (IOException ignored) {}
+			return;
+		}
+
+		List<PsdNode> selectedNodes = result.selected();
+		ImportMode mode = result.mode();
+
+		runBackground(
+			() -> {
+				try
+				{
+					List<ImportedFrame> frames = new ArrayList<>();
+					for (PsdNode node : selectedNodes)
+					{
+						PsdImporter.FlattenedFrame flat = PsdImporter.flattenNode(tree, node);
+						FrameLoader.QuantizeResult qr = FrameLoader.quantizeToIndexed(flat.image());
+						frames.add(new ImportedFrame(node.name,
+							new FrameLoader.FrameData(qr.image(), qr.transparentIndex()),
+							-1, flat.warnings()));
+					}
+					return frames;
+				}
+				finally
+				{
+					try { tree.close(); } catch (IOException ignored) {}
+				}
+			},
+			frames -> handleImportedFrames(frames, mode),
+			"PSD Import Error");
+	}
 
 	// --- APNG import ---
 
@@ -610,135 +642,42 @@ public class MainFrame extends JFrame
 		File apngFile = chooser.getSelectedFile();
 		lastDirectory = apngFile.getParentFile();
 
-		// Parse off-EDT
-		setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
-		new SwingWorker<ApngReader.ApngResult, Void>()
-		{
-			@Override
-			protected ApngReader.ApngResult doInBackground() throws Exception
-			{
+		runBackground(
+			() -> {
 				if (!ApngReader.isApng(apngFile))
 				{
 					throw new IOException("File is not an animated PNG: " + apngFile.getName());
 				}
 				return ApngReader.loadApng(apngFile);
-			}
-
-			@Override
-			protected void done()
-			{
-				setCursor(Cursor.getDefaultCursor());
-				ApngReader.ApngResult apngResult;
-				try
-				{
-					apngResult = get();
-				}
-				catch (Exception ex)
-				{
-					Throwable cause = ex.getCause() != null ? ex.getCause() : ex;
-					JOptionPane.showMessageDialog(MainFrame.this,
-						cause.getMessage(), "APNG Error", JOptionPane.ERROR_MESSAGE);
-					return;
-				}
-
-				importApngWithResult(apngResult, apngFile.getName());
-			}
-		}.execute();
+			},
+			apngResult -> importApngWithResult(apngResult, apngFile.getName()),
+			"APNG Error");
 	}
 
 	private void importApngWithResult(ApngReader.ApngResult apngResult, String filename)
 	{
-		try
-		{
-			ApngImportDialog.ImportResult result = ApngImportDialog.show(this, apngResult, filename);
-			if (result == null) return;
+		BaseImportDialog.ImportResult<ApngReader.ApngFrame> result = ApngImportDialog.show(this, apngResult, filename);
+		if (result == null) return;
 
-			List<ApngReader.ApngFrame> selectedFrames = result.selectedFrames();
-			ApngImportDialog.ImportMode mode = result.mode();
+		List<ApngReader.ApngFrame> selectedFrames = result.selected();
+		ImportMode mode = result.mode();
 
-			// Quantize off-EDT
-			setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
-			new SwingWorker<List<ApngImportFrame>, Void>()
-			{
-				@Override
-				protected List<ApngImportFrame> doInBackground()
+		runBackground(
+			() -> {
+				List<ImportedFrame> frames = new ArrayList<>();
+				for (int i = 0; i < selectedFrames.size(); i++)
 				{
-					List<ApngImportFrame> frames = new ArrayList<>();
-					for (int i = 0; i < selectedFrames.size(); i++)
-					{
-						ApngReader.ApngFrame af = selectedFrames.get(i);
-						FrameLoader.QuantizeResult qr = FrameLoader.quantizeToIndexed(af.image());
-						frames.add(new ApngImportFrame("Frame " + (i + 1), qr, af.delayMs()));
-					}
-					return frames;
+					ApngReader.ApngFrame af = selectedFrames.get(i);
+					FrameLoader.QuantizeResult qr = FrameLoader.quantizeToIndexed(af.image());
+					frames.add(new ImportedFrame("Frame " + (i + 1),
+						new FrameLoader.FrameData(qr.image(), qr.transparentIndex()),
+						af.delayMs()));
 				}
-
-				@Override
-				protected void done()
-				{
-					setCursor(Cursor.getDefaultCursor());
-					try
-					{
-						List<ApngImportFrame> frames = get();
-
-						List<FrameLoader.FrameData> frameDataList = frames.stream()
-							.map(af -> new FrameLoader.FrameData(
-								af.quantized().image(), af.quantized().transparentIndex()))
-							.toList();
-
-						if (mode == ApngImportDialog.ImportMode.FRAMES)
-						{
-							// Use most common delay from selected frames
-							var delayCounts = new java.util.LinkedHashMap<Integer, Integer>();
-							for (ApngImportFrame af : frames)
-							{
-								delayCounts.merge(af.delayMs(), 1, Integer::sum);
-							}
-							int delayMs = delayCounts.entrySet().stream()
-								.max(java.util.Map.Entry.comparingByValue())
-								.map(java.util.Map.Entry::getKey)
-								.orElse(100);
-							loadAsFrames(frameDataList, delayMs);
-						}
-						else
-						{
-							List<NamedFrameData> named = new ArrayList<>();
-							for (int i = 0; i < frames.size(); i++)
-							{
-								named.add(new NamedFrameData(frames.get(i).name(), frameDataList.get(i)));
-							}
-							loadAsLayers(named);
-						}
-					}
-					catch (Exception ex)
-					{
-						Throwable cause = ex.getCause() != null ? ex.getCause() : ex;
-						if (cause instanceof OutOfMemoryError)
-						{
-							JOptionPane.showMessageDialog(MainFrame.this,
-								"Not enough memory to import these frames.\n"
-									+ "Try importing fewer frames or use smaller images.",
-								"Out of Memory", JOptionPane.ERROR_MESSAGE);
-						}
-						else
-						{
-							JOptionPane.showMessageDialog(MainFrame.this,
-								"APNG import failed: " + cause.getMessage(),
-								"Import Error", JOptionPane.ERROR_MESSAGE);
-						}
-					}
-				}
-			}.execute();
-		}
-		catch (Exception ex)
-		{
-			JOptionPane.showMessageDialog(this,
-				"APNG import failed: " + ex.getMessage(),
-				"Import Error", JOptionPane.ERROR_MESSAGE);
-		}
+				return frames;
+			},
+			frames -> handleImportedFrames(frames, mode),
+			"APNG Import Error");
 	}
-
-	private record ApngImportFrame(String name, FrameLoader.QuantizeResult quantized, int delayMs) {}
 
 	/**
 	 * Loads frames into the currently selected layer. Pass delayMs > 0 to override
@@ -769,25 +708,23 @@ public class MainFrame extends JFrame
 		repaint();
 	}
 
-	private record NamedFrameData(String name, FrameLoader.FrameData frame) {}
-
 	/**
-	 * Creates a new layer for each frame.
+	 * Creates a new layer for each imported frame.
 	 */
-	private void loadAsLayers(List<NamedFrameData> frames)
+	private void loadAsLayers(List<ImportedFrame> frames)
 	{
-		for (NamedFrameData nf : frames)
+		for (ImportedFrame f : frames)
 		{
-			int w = nf.frame().image().getWidth();
-			int h = nf.frame().image().getHeight();
+			int w = f.frame().image().getWidth();
+			int h = f.frame().image().getHeight();
 
-			LayerState ls = layerListPanel.addLayer(nf.name());
+			LayerState ls = layerListPanel.addLayer(f.name());
 			if (ls == null) break; // hit max layers
 
 			ls.width = w;
 			ls.height = h;
-			ls.layer = new Compositor.Layer(List.of(nf.frame()), w, h, ls.delayMs);
-			ls.browser.setFrames(List.of(nf.frame()));
+			ls.layer = new Compositor.Layer(List.of(f.frame()), w, h, ls.delayMs);
+			ls.browser.setFrames(List.of(f.frame()));
 		}
 
 		onLayerSelectionChanged();

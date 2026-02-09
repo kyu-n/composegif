@@ -8,39 +8,27 @@ import javax.swing.tree.TreePath;
 import java.awt.*;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
-import java.awt.event.WindowAdapter;
-import java.awt.event.WindowEvent;
 import java.awt.image.BufferedImage;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-public class PsdImportDialog extends JDialog
+public class PsdImportDialog extends BaseImportDialog<PsdNode>
 {
-	public enum ImportMode { FRAMES, LAYERS }
-
-	public record ImportResult(List<PsdNode> selectedNodes, ImportMode mode) {}
-
 	private final PsdImporter.PsdTree tree;
 	private final Map<PsdNode, Boolean> checkState = new HashMap<>();
-	private final DefaultTreeModel treeModel;
 	private final JTree jTree;
-	private final CheckerboardPreviewPanel previewArea;
-	private final JRadioButton framesRadio;
-	private final JRadioButton layersRadio;
 	private final Timer previewDebounce;
 	private SwingWorker<BufferedImage, Void> currentPreviewWorker;
-	private boolean confirmed = false;
 
 	private PsdImportDialog(JFrame parent, PsdImporter.PsdTree tree, String filename)
 	{
-		super(parent, "Import PSD: " + filename, true);
-		this.tree = tree;
+		super(parent, "Import PSD: " + filename,
+			"Import folders as frames (into current layer)",
+			"Import folders as layers (one per selection)");
 
-		setSize(700, 500);
-		setLocationRelativeTo(parent);
-		setDefaultCloseOperation(DISPOSE_ON_CLOSE);
+		this.tree = tree;
 
 		// Build tree model
 		DefaultMutableTreeNode rootNode = new DefaultMutableTreeNode("root");
@@ -48,13 +36,12 @@ public class PsdImportDialog extends JDialog
 		{
 			rootNode.add(buildTreeNode(node));
 		}
-		treeModel = new DefaultTreeModel(rootNode);
 
-		// Initialize check state: visible nodes checked, hidden unchecked
+		// Initialize check state: all nodes checked
 		initCheckState(tree.roots());
 
 		// Create JTree
-		jTree = new JTree(treeModel);
+		jTree = new JTree(new DefaultTreeModel(rootNode));
 		jTree.setRootVisible(false);
 		jTree.setShowsRootHandles(true);
 		jTree.setCellRenderer(new CheckboxTreeCellRenderer());
@@ -89,83 +76,11 @@ public class PsdImportDialog extends JDialog
 			jTree.expandRow(i);
 		}
 
-		// Left panel: Select All/None buttons + tree
-		JPanel leftPanel = new JPanel(new BorderLayout(0, 4));
-		JPanel buttonRow = new JPanel(new FlowLayout(FlowLayout.LEFT, 4, 0));
-		JButton selectAllBtn = new JButton("Select All");
-		selectAllBtn.addActionListener(e -> {
-			setAllChecked(true);
-			jTree.repaint();
-			updatePreview();
-		});
-		JButton selectNoneBtn = new JButton("None");
-		selectNoneBtn.addActionListener(e -> {
-			setAllChecked(false);
-			jTree.repaint();
-			updatePreview();
-		});
-		buttonRow.add(selectAllBtn);
-		buttonRow.add(selectNoneBtn);
-		leftPanel.add(buttonRow, BorderLayout.NORTH);
-		leftPanel.add(new JScrollPane(jTree), BorderLayout.CENTER);
-
-		// Right panel: preview
-		previewArea = new CheckerboardPreviewPanel();
-		previewArea.setBorder(BorderFactory.createTitledBorder("Preview"));
-
-		// Top split: tree + preview
-		JSplitPane splitPane = new JSplitPane(JSplitPane.HORIZONTAL_SPLIT, leftPanel, previewArea);
-		splitPane.setDividerLocation(300);
-		splitPane.setResizeWeight(0.4);
-
-		// Bottom panel: radio buttons + OK/Cancel
-		JPanel bottomPanel = new JPanel(new BorderLayout());
-		JPanel radioPanel = new JPanel();
-		radioPanel.setLayout(new BoxLayout(radioPanel, BoxLayout.Y_AXIS));
-		radioPanel.setBorder(BorderFactory.createEmptyBorder(4, 8, 4, 8));
-		framesRadio = new JRadioButton("Import folders as frames (into current layer)");
-		layersRadio = new JRadioButton("Import folders as layers (one per selection)");
-		framesRadio.setSelected(true);
-		ButtonGroup bg = new ButtonGroup();
-		bg.add(framesRadio);
-		bg.add(layersRadio);
-		radioPanel.add(framesRadio);
-		radioPanel.add(layersRadio);
-		bottomPanel.add(radioPanel, BorderLayout.CENTER);
-
-		JPanel okCancelPanel = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 4));
-		JButton okBtn = new JButton("OK");
-		JButton cancelBtn = new JButton("Cancel");
-		okBtn.addActionListener(e -> {
-			confirmed = true;
-			dispose();
-		});
-		cancelBtn.addActionListener(e -> dispose());
-		okCancelPanel.add(okBtn);
-		okCancelPanel.add(cancelBtn);
-		bottomPanel.add(okCancelPanel, BorderLayout.EAST);
-
-		// Assemble
-		setLayout(new BorderLayout());
-		add(splitPane, BorderLayout.CENTER);
-		add(bottomPanel, BorderLayout.SOUTH);
-
-		getRootPane().setDefaultButton(okBtn);
-
 		// Debounce timer: fires firePreviewUpdate() after 50ms of inactivity
 		previewDebounce = new Timer(50, e -> firePreviewUpdate());
 		previewDebounce.setRepeats(false);
 
-		// Force repaint after window manager shows the dialog (Wayland fix)
-		addWindowListener(new WindowAdapter()
-		{
-			@Override
-			public void windowOpened(WindowEvent e)
-			{
-				revalidate();
-				repaint();
-			}
-		});
+		init(new JScrollPane(jTree));
 
 		// Initial preview (fire directly, no debounce for initial load)
 		firePreviewUpdate();
@@ -183,47 +98,60 @@ public class PsdImportDialog extends JDialog
 		super.dispose();
 	}
 
-	/**
-	 * Shows the dialog and returns the result, or null if cancelled.
-	 */
-	public static ImportResult show(JFrame parent, PsdImporter.PsdTree tree, String filename)
+	public static ImportResult<PsdNode> show(JFrame parent, PsdImporter.PsdTree tree, String filename)
 	{
 		PsdImportDialog dialog = new PsdImportDialog(parent, tree, filename);
-		dialog.setVisible(true);
-
-		if (!dialog.confirmed) return null;
-
-		List<PsdNode> selectedNodes = dialog.getSelectedRootNodes();
-		if (selectedNodes.isEmpty()) return null;
-
-		ImportMode mode = dialog.layersRadio.isSelected() ? ImportMode.LAYERS : ImportMode.FRAMES;
-		return new ImportResult(selectedNodes, mode);
+		return dialog.showDialog();
 	}
 
-	/**
-	 * Returns all checked nodes that have no checked ancestor.
-	 * If a group is checked, the group is returned (not its children separately).
-	 * If a group is unchecked but some of its children are checked, those children are returned.
-	 */
-	private List<PsdNode> getSelectedRootNodes()
+	@Override
+	protected void selectAll()
+	{
+		for (Map.Entry<PsdNode, Boolean> entry : checkState.entrySet())
+		{
+			entry.setValue(true);
+		}
+	}
+
+	@Override
+	protected void selectNone()
+	{
+		for (Map.Entry<PsdNode, Boolean> entry : checkState.entrySet())
+		{
+			entry.setValue(false);
+		}
+	}
+
+	@Override
+	protected List<PsdNode> getSelectedItems()
 	{
 		List<PsdNode> result = new ArrayList<>();
 		collectSelectedNodes(tree.roots(), result);
 		return result;
 	}
 
+	@Override
+	protected void onSelectionChanged()
+	{
+		jTree.repaint();
+		updatePreview();
+	}
+
+	/**
+	 * Collects checked nodes with no checked ancestor.
+	 * If a group is checked, the group is returned (not its children separately).
+	 * If a group is unchecked but some of its children are checked, those children are returned.
+	 */
 	private void collectSelectedNodes(List<PsdNode> nodes, List<PsdNode> result)
 	{
 		for (PsdNode node : nodes)
 		{
 			if (isChecked(node))
 			{
-				// This node is checked — return it; don't descend into children
 				result.add(node);
 			}
 			else if (node.isGroup)
 			{
-				// Group is unchecked, but maybe some children are checked
 				collectSelectedNodes(node.children, result);
 			}
 		}
@@ -239,8 +167,6 @@ public class PsdImportDialog extends JDialog
 	{
 		for (PsdNode node : nodes)
 		{
-			// Default all nodes to checked — the user opened the dialog to import.
-			// PSD visibility is shown via "(H)" and italic styling for reference only.
 			checkState.put(node, true);
 			if (node.isGroup)
 			{
@@ -261,14 +187,6 @@ public class PsdImportDialog extends JDialog
 		}
 	}
 
-	private void setAllChecked(boolean checked)
-	{
-		for (Map.Entry<PsdNode, Boolean> entry : checkState.entrySet())
-		{
-			entry.setValue(checked);
-		}
-	}
-
 	private DefaultMutableTreeNode buildTreeNode(PsdNode node)
 	{
 		DefaultMutableTreeNode treeNode = new DefaultMutableTreeNode(node);
@@ -284,20 +202,18 @@ public class PsdImportDialog extends JDialog
 
 	private void updatePreview()
 	{
-		// Debounce: restart the timer on each call, fire after 50ms of inactivity
 		previewDebounce.restart();
 	}
 
 	private void firePreviewUpdate()
 	{
-		List<PsdNode> selected = getSelectedRootNodes();
+		List<PsdNode> selected = getSelectedItems();
 		if (selected.isEmpty())
 		{
 			previewArea.setImage(null);
 			return;
 		}
 
-		// Cancel any previous worker to prevent concurrent ImageReader access
 		if (currentPreviewWorker != null && !currentPreviewWorker.isDone())
 		{
 			currentPreviewWorker.cancel(false);
@@ -411,5 +327,4 @@ public class PsdImportDialog extends JDialog
 			return panel;
 		}
 	}
-
 }
