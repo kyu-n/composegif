@@ -26,7 +26,7 @@ public class PsdImportDialog extends JDialog
 	private final Map<PsdNode, Boolean> checkState = new HashMap<>();
 	private final DefaultTreeModel treeModel;
 	private final JTree jTree;
-	private final PreviewArea previewArea;
+	private final CheckerboardPreviewPanel previewArea;
 	private final JRadioButton framesRadio;
 	private final JRadioButton layersRadio;
 	private final Timer previewDebounce;
@@ -110,7 +110,7 @@ public class PsdImportDialog extends JDialog
 		leftPanel.add(new JScrollPane(jTree), BorderLayout.CENTER);
 
 		// Right panel: preview
-		previewArea = new PreviewArea();
+		previewArea = new CheckerboardPreviewPanel();
 		previewArea.setBorder(BorderFactory.createTitledBorder("Preview"));
 
 		// Top split: tree + preview
@@ -412,65 +412,4 @@ public class PsdImportDialog extends JDialog
 		}
 	}
 
-	// --- Preview area ---
-
-	private static class PreviewArea extends JPanel
-	{
-		private BufferedImage image;
-
-		void setImage(BufferedImage img)
-		{
-			this.image = img;
-			repaint();
-		}
-
-		@Override
-		protected void paintComponent(Graphics g)
-		{
-			super.paintComponent(g);
-			if (image == null)
-			{
-				g.setColor(Color.GRAY);
-				String msg = "No selection";
-				int sw = g.getFontMetrics().stringWidth(msg);
-				g.drawString(msg, (getWidth() - sw) / 2, getHeight() / 2);
-				return;
-			}
-
-			// Scale to fit preserving aspect ratio
-			Insets insets = getInsets();
-			int areaW = getWidth() - insets.left - insets.right;
-			int areaH = getHeight() - insets.top - insets.bottom;
-			if (areaW <= 0 || areaH <= 0) return;
-
-			int imgW = image.getWidth();
-			int imgH = image.getHeight();
-			double scale = Math.min((double) areaW / imgW, (double) areaH / imgH);
-
-			int drawW = (int) (imgW * scale);
-			int drawH = (int) (imgH * scale);
-			int drawX = insets.left + (areaW - drawW) / 2;
-			int drawY = insets.top + (areaH - drawH) / 2;
-
-			// Draw checkerboard background (scale checker size with image)
-			Graphics2D g2 = (Graphics2D) g;
-			int checkSize = Math.max(4, (int) Math.ceil(8 * scale));
-			Color checkLight = new Color(204, 204, 204);
-			Color checkDark = new Color(153, 153, 153);
-			for (int cy = 0; cy < drawH; cy += checkSize)
-			{
-				for (int cx = 0; cx < drawW; cx += checkSize)
-				{
-					g2.setColor(((cx / checkSize + cy / checkSize) % 2 == 0) ? checkLight : checkDark);
-					g2.fillRect(drawX + cx, drawY + cy,
-							Math.min(checkSize, drawW - cx),
-							Math.min(checkSize, drawH - cy));
-				}
-			}
-
-			g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION,
-					RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
-			g2.drawImage(image, drawX, drawY, drawW, drawH, null);
-		}
-	}
 }

@@ -151,8 +151,58 @@ public class FrameLoader
 		for (int i = 0; i < sorted.size(); i++)
 		{
 			File file = sorted.get(i);
+			String nameLower = file.getName().toLowerCase();
 
-			if (file.getName().toLowerCase().endsWith(".gif"))
+			// Check for APNG before regular PNG handling
+			if ((nameLower.endsWith(".apng") || nameLower.endsWith(".png")) && ApngReader.isApng(file))
+			{
+				ApngReader.ApngResult apngResult = ApngReader.loadApng(file);
+
+				// Use timing from the first animated file only
+				if (extractedDelayMs < 0 && !apngResult.frames().isEmpty())
+				{
+					// Use most common delay
+					Map<Integer, Integer> delayCounts = new LinkedHashMap<>();
+					for (ApngReader.ApngFrame af : apngResult.frames())
+					{
+						delayCounts.merge(af.delayMs(), 1, Integer::sum);
+					}
+					extractedDelayMs = delayCounts.entrySet().stream()
+						.max(Map.Entry.comparingByValue())
+						.map(Map.Entry::getKey)
+						.orElse(100);
+					if (delayCounts.size() > 1)
+					{
+						warnings.add("APNG has inconsistent frame delays " + delayCounts.keySet()
+							+ " — using most common: " + extractedDelayMs + "ms");
+					}
+				}
+
+				// Check dimensions
+				if (expectedWidth < 0)
+				{
+					expectedWidth = apngResult.width();
+					expectedHeight = apngResult.height();
+				}
+				else if (apngResult.width() != expectedWidth || apngResult.height() != expectedHeight)
+				{
+					dimensionErrors.add(String.format(
+						"%s: %dx%d (expected %dx%d)", file.getName(),
+						apngResult.width(), apngResult.height(), expectedWidth, expectedHeight));
+				}
+
+				// Quantize and add all frames
+				for (ApngReader.ApngFrame af : apngResult.frames())
+				{
+					QuantizeResult qr = quantizeToIndexed(af.image());
+					frames.add(new FrameData(qr.image(), qr.transparentIndex()));
+				}
+				warnings.add(file.getName() + ": loaded " + apngResult.frames().size()
+					+ " APNG frames — quantizing to 256 colors for GIF compatibility");
+				continue;
+			}
+
+			if (nameLower.endsWith(".gif"))
 			{
 				// Extract all frames from this GIF
 				LoadResult gifResult = loadGif(file);

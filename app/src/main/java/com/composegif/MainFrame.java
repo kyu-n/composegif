@@ -7,6 +7,8 @@ import javax.swing.JComboBox;
 import javax.swing.JFileChooser;
 import javax.swing.JFrame;
 import javax.swing.JLabel;
+import javax.swing.JMenuItem;
+import javax.swing.JPopupMenu;
 import javax.swing.JOptionPane;
 import javax.swing.JPanel;
 import javax.swing.JProgressBar;
@@ -123,20 +125,16 @@ public class MainFrame extends JFrame
 		gbc.gridy = row;
 		gbc.gridx = 0;
 		JButton loadButton = new JButton("Load...");
-		loadButton.addActionListener(e -> loadSelectedLayer());
+		JPopupMenu loadMenu = new JPopupMenu();
+		loadMenu.add(new JMenuItem("Load Loose Files")).addActionListener(e -> loadSelectedLayer());
+		loadMenu.add(new JMenuItem("Load APNG")).addActionListener(e -> importApng());
+		loadMenu.add(new JMenuItem("Load PSD")).addActionListener(e -> importPsd());
+		loadButton.addActionListener(e -> loadMenu.show(loadButton, 0, loadButton.getHeight()));
 		controlPanel.add(loadButton, gbc);
 		gbc.gridx = 1;
 		JButton clearButton = new JButton("Clear");
 		clearButton.addActionListener(e -> clearSelectedLayer());
 		controlPanel.add(clearButton, gbc);
-		row++;
-
-		gbc.gridy = row;
-		gbc.gridx = 0;
-		gbc.gridwidth = 2;
-		JButton importPsdButton = new JButton("Import PSD...");
-		importPsdButton.addActionListener(e -> importPsd());
-		controlPanel.add(importPsdButton, gbc);
 		row++;
 
 		gbc.gridy = row;
@@ -391,7 +389,7 @@ public class MainFrame extends JFrame
 		chooser.setMultiSelectionEnabled(true);
 		chooser.setDialogTitle("Select frame files (" + ls.name + ")");
 		chooser.setFileFilter(new FileNameExtensionFilter(
-				"Images (PNG, GIF, BMP, JPEG)", "png", "gif", "bmp", "jpg", "jpeg"));
+				"Images (PNG, APNG, GIF, BMP, JPEG)", "png", "apng", "gif", "bmp", "jpg", "jpeg"));
 		if (lastDirectory != null)
 		{
 			chooser.setCurrentDirectory(lastDirectory);
@@ -419,26 +417,12 @@ public class MainFrame extends JFrame
 				{
 					FrameLoader.LoadResult result = get();
 
-					// If the source has embedded timing, use it
-					if (result.extractedDelayMs() > 0)
-					{
-						ls.delayMs = result.extractedDelayMs();
-						delaySpinner.setValue(ls.delayMs);
-					}
-
-					ls.width = result.width();
-					ls.height = result.height();
-					ls.layer = new Compositor.Layer(
-							result.frames(), result.width(), result.height(), ls.delayMs);
-					ls.browser.setFrames(result.frames());
-
 					for (String w : result.warnings())
 					{
 						System.out.println("[warn] " + w);
 					}
 
-					onLayerSelectionChanged(); // refresh editor
-					updatePreview();
+					loadAsFrames(result.frames(), result.extractedDelayMs());
 				}
 				catch (Exception ex)
 				{
@@ -560,13 +544,31 @@ public class MainFrame extends JFrame
 						List<PsdImportFrame> frames = get();
 						tree.close();
 
+						for (PsdImportFrame pf : frames)
+						{
+							for (String w : pf.warnings())
+							{
+								System.out.println("[warn] " + w);
+							}
+						}
+
+						List<FrameLoader.FrameData> frameDataList = frames.stream()
+							.map(pf -> new FrameLoader.FrameData(
+								pf.quantized().image(), pf.quantized().transparentIndex()))
+							.toList();
+
 						if (mode == PsdImportDialog.ImportMode.FRAMES)
 						{
-							importPsdAsFrames(frames);
+							loadAsFrames(frameDataList, -1);
 						}
 						else
 						{
-							importPsdAsLayers(frames);
+							List<NamedFrameData> named = new ArrayList<>();
+							for (int i = 0; i < frames.size(); i++)
+							{
+								named.add(new NamedFrameData(frames.get(i).name(), frameDataList.get(i)));
+							}
+							loadAsLayers(named);
 						}
 					}
 					catch (Exception ex)
@@ -591,61 +593,207 @@ public class MainFrame extends JFrame
 
 	private record PsdImportFrame(String name, FrameLoader.QuantizeResult quantized, List<String> warnings) {}
 
-	private void importPsdAsFrames(List<PsdImportFrame> frames)
+	// --- APNG import ---
+
+	private void importApng()
+	{
+		JFileChooser chooser = new JFileChooser();
+		chooser.setFileSelectionMode(JFileChooser.FILES_ONLY);
+		chooser.setMultiSelectionEnabled(false);
+		chooser.setDialogTitle("Select APNG file");
+		chooser.setFileFilter(new FileNameExtensionFilter(
+			"Animated PNG files (APNG)", "apng", "png"));
+		if (lastDirectory != null) chooser.setCurrentDirectory(lastDirectory);
+
+		if (chooser.showOpenDialog(this) != JFileChooser.APPROVE_OPTION) return;
+
+		File apngFile = chooser.getSelectedFile();
+		lastDirectory = apngFile.getParentFile();
+
+		// Parse off-EDT
+		setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
+		new SwingWorker<ApngReader.ApngResult, Void>()
+		{
+			@Override
+			protected ApngReader.ApngResult doInBackground() throws Exception
+			{
+				if (!ApngReader.isApng(apngFile))
+				{
+					throw new IOException("File is not an animated PNG: " + apngFile.getName());
+				}
+				return ApngReader.loadApng(apngFile);
+			}
+
+			@Override
+			protected void done()
+			{
+				setCursor(Cursor.getDefaultCursor());
+				ApngReader.ApngResult apngResult;
+				try
+				{
+					apngResult = get();
+				}
+				catch (Exception ex)
+				{
+					Throwable cause = ex.getCause() != null ? ex.getCause() : ex;
+					JOptionPane.showMessageDialog(MainFrame.this,
+						cause.getMessage(), "APNG Error", JOptionPane.ERROR_MESSAGE);
+					return;
+				}
+
+				importApngWithResult(apngResult, apngFile.getName());
+			}
+		}.execute();
+	}
+
+	private void importApngWithResult(ApngReader.ApngResult apngResult, String filename)
+	{
+		try
+		{
+			ApngImportDialog.ImportResult result = ApngImportDialog.show(this, apngResult, filename);
+			if (result == null) return;
+
+			List<ApngReader.ApngFrame> selectedFrames = result.selectedFrames();
+			ApngImportDialog.ImportMode mode = result.mode();
+
+			// Quantize off-EDT
+			setCursor(Cursor.getPredefinedCursor(Cursor.WAIT_CURSOR));
+			new SwingWorker<List<ApngImportFrame>, Void>()
+			{
+				@Override
+				protected List<ApngImportFrame> doInBackground()
+				{
+					List<ApngImportFrame> frames = new ArrayList<>();
+					for (int i = 0; i < selectedFrames.size(); i++)
+					{
+						ApngReader.ApngFrame af = selectedFrames.get(i);
+						FrameLoader.QuantizeResult qr = FrameLoader.quantizeToIndexed(af.image());
+						frames.add(new ApngImportFrame("Frame " + (i + 1), qr, af.delayMs()));
+					}
+					return frames;
+				}
+
+				@Override
+				protected void done()
+				{
+					setCursor(Cursor.getDefaultCursor());
+					try
+					{
+						List<ApngImportFrame> frames = get();
+
+						List<FrameLoader.FrameData> frameDataList = frames.stream()
+							.map(af -> new FrameLoader.FrameData(
+								af.quantized().image(), af.quantized().transparentIndex()))
+							.toList();
+
+						if (mode == ApngImportDialog.ImportMode.FRAMES)
+						{
+							// Use most common delay from selected frames
+							var delayCounts = new java.util.LinkedHashMap<Integer, Integer>();
+							for (ApngImportFrame af : frames)
+							{
+								delayCounts.merge(af.delayMs(), 1, Integer::sum);
+							}
+							int delayMs = delayCounts.entrySet().stream()
+								.max(java.util.Map.Entry.comparingByValue())
+								.map(java.util.Map.Entry::getKey)
+								.orElse(100);
+							loadAsFrames(frameDataList, delayMs);
+						}
+						else
+						{
+							List<NamedFrameData> named = new ArrayList<>();
+							for (int i = 0; i < frames.size(); i++)
+							{
+								named.add(new NamedFrameData(frames.get(i).name(), frameDataList.get(i)));
+							}
+							loadAsLayers(named);
+						}
+					}
+					catch (Exception ex)
+					{
+						Throwable cause = ex.getCause() != null ? ex.getCause() : ex;
+						if (cause instanceof OutOfMemoryError)
+						{
+							JOptionPane.showMessageDialog(MainFrame.this,
+								"Not enough memory to import these frames.\n"
+									+ "Try importing fewer frames or use smaller images.",
+								"Out of Memory", JOptionPane.ERROR_MESSAGE);
+						}
+						else
+						{
+							JOptionPane.showMessageDialog(MainFrame.this,
+								"APNG import failed: " + cause.getMessage(),
+								"Import Error", JOptionPane.ERROR_MESSAGE);
+						}
+					}
+				}
+			}.execute();
+		}
+		catch (Exception ex)
+		{
+			JOptionPane.showMessageDialog(this,
+				"APNG import failed: " + ex.getMessage(),
+				"Import Error", JOptionPane.ERROR_MESSAGE);
+		}
+	}
+
+	private record ApngImportFrame(String name, FrameLoader.QuantizeResult quantized, int delayMs) {}
+
+	/**
+	 * Loads frames into the currently selected layer. Pass delayMs > 0 to override
+	 * the layer's delay; pass -1 to keep the existing delay.
+	 */
+	private void loadAsFrames(List<FrameLoader.FrameData> frames, int delayMs)
 	{
 		LayerState ls = layerListPanel.getSelectedLayer();
-		if (ls == null) return;
+		if (ls == null || frames.isEmpty()) return;
 
-		List<FrameLoader.FrameData> frameDataList = new ArrayList<>();
-		for (PsdImportFrame pf : frames)
+		if (delayMs > 0)
 		{
-			frameDataList.add(new FrameLoader.FrameData(pf.quantized().image(), pf.quantized().transparentIndex()));
-			for (String w : pf.warnings())
-			{
-				System.out.println("[warn] " + w);
-			}
+			ls.delayMs = delayMs;
+			delaySpinner.setValue(ls.delayMs);
 		}
 
-		if (frameDataList.isEmpty()) return;
-
-		int w = frameDataList.get(0).image().getWidth();
-		int h = frameDataList.get(0).image().getHeight();
+		int w = frames.get(0).image().getWidth();
+		int h = frames.get(0).image().getHeight();
 
 		ls.width = w;
 		ls.height = h;
-		ls.layer = new Compositor.Layer(frameDataList, w, h, ls.delayMs);
-		ls.browser.setFrames(frameDataList);
+		ls.layer = new Compositor.Layer(frames, w, h, ls.delayMs);
+		ls.browser.setFrames(frames);
 
 		onLayerSelectionChanged();
 		updatePreview();
+		revalidate();
+		repaint();
 	}
 
-	private void importPsdAsLayers(List<PsdImportFrame> frames)
+	private record NamedFrameData(String name, FrameLoader.FrameData frame) {}
+
+	/**
+	 * Creates a new layer for each frame.
+	 */
+	private void loadAsLayers(List<NamedFrameData> frames)
 	{
-		for (PsdImportFrame pf : frames)
+		for (NamedFrameData nf : frames)
 		{
-			FrameLoader.FrameData fd = new FrameLoader.FrameData(
-					pf.quantized().image(), pf.quantized().transparentIndex());
+			int w = nf.frame().image().getWidth();
+			int h = nf.frame().image().getHeight();
 
-			int w = fd.image().getWidth();
-			int h = fd.image().getHeight();
-
-			LayerState ls = layerListPanel.addLayer(pf.name());
+			LayerState ls = layerListPanel.addLayer(nf.name());
 			if (ls == null) break; // hit max layers
 
 			ls.width = w;
 			ls.height = h;
-			ls.layer = new Compositor.Layer(List.of(fd), w, h, ls.delayMs);
-			ls.browser.setFrames(List.of(fd));
-
-			for (String warn : pf.warnings())
-			{
-				System.out.println("[warn] " + warn);
-			}
+			ls.layer = new Compositor.Layer(List.of(nf.frame()), w, h, ls.delayMs);
+			ls.browser.setFrames(List.of(nf.frame()));
 		}
 
 		onLayerSelectionChanged();
 		updatePreview();
+		revalidate();
+		repaint();
 	}
 
 	private void onBrowserChanged(LayerState ls)
