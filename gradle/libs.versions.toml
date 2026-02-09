@@ -8,4 +8,14 @@ twelvemonkeys = "3.13.0"
 commons-imaging = { module = "org.apache.commons:commons-imaging", version.ref = "commons-imaging" }
 flatlaf = { module = "com.formdev:flatlaf", version.ref = "flatlaf" }
 junit-jupiter = { module = "org.junit.jupiter:junit-jupiter", version.ref = "junit-jupiter" }
+twelvemonkeys-imageio-bmp = { module = "com.twelvemonkeys.imageio:imageio-bmp", version.ref = "twelvemonkeys" }
+twelvemonkeys-imageio-hdr = { module = "com.twelvemonkeys.imageio:imageio-hdr", version.ref = "twelvemonkeys" }
+twelvemonkeys-imageio-icns = { module = "com.twelvemonkeys.imageio:imageio-icns", version.ref = "twelvemonkeys" }
+twelvemonkeys-imageio-pcx = { module = "com.twelvemonkeys.imageio:imageio-pcx", version.ref = "twelvemonkeys" }
+twelvemonkeys-imageio-pict = { module = "com.twelvemonkeys.imageio:imageio-pict", version.ref = "twelvemonkeys" }
+twelvemonkeys-imageio-pnm = { module = "com.twelvemonkeys.imageio:imageio-pnm", version.ref = "twelvemonkeys" }
 twelvemonkeys-imageio-psd = { module = "com.twelvemonkeys.imageio:imageio-psd", version.ref = "twelvemonkeys" }
+twelvemonkeys-imageio-sgi = { module = "com.twelvemonkeys.imageio:imageio-sgi", version.ref = "twelvemonkeys" }
+twelvemonkeys-imageio-tga = { module = "com.twelvemonkeys.imageio:imageio-tga", version.ref = "twelvemonkeys" }
+twelvemonkeys-imageio-tiff = { module = "com.twelvemonkeys.imageio:imageio-tiff", version.ref = "twelvemonkeys" }
+twelvemonkeys-imageio-webp = { module = "com.twelvemonkeys.imageio:imageio-webp", version.ref = "twelvemonkeys" }

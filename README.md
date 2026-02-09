@@ -14,6 +14,8 @@ A desktop tool for compositing multi-layer animated GIFs. Combine background lay
 
 - **PSD import** -- Import Photoshop files with full layer hierarchy. Choose to import selected layers/groups as animation frames on one layer or as separate compositing layers.
 
+- **APNG import** -- Import animated PNGs with frame selection. Supports all disposal and blend modes. Choose to import selected frames as animation frames or as separate layers.
+
 - **Animated preview** -- Real-time preview of the composited animation with checkerboard transparency visualization.
 
 - **Chromakey removal** -- Click colors in the palette panel to mark them as transparent per-layer. Useful for keying out background colors from indexed-color sprites.
@@ -25,9 +27,20 @@ A desktop tool for compositing multi-layer animated GIFs. Combine background lay
 | Format | Notes |
 |--------|-------|
 | PNG sequences | Numbered files (1.png, 2.png, ...) loaded in natural sort order |
+| APNG | Animated PNG with frame selection dialog; preserves embedded timing |
 | GIF | Extracts frames with correct disposal handling; preserves embedded timing |
 | PSD | Layers and groups via Photoshop import dialog |
 | BMP, JPEG | Single frames or multi-select |
+| TIFF | Single or multi-select |
+| WebP | Single or multi-select |
+| TGA | Single or multi-select |
+| ICO, CUR | Single or multi-select (via BMP plugin) |
+| ICNS | Single or multi-select |
+| PCX | Single or multi-select |
+| PICT | Single or multi-select |
+| PNM (PBM, PGM, PPM, PAM, PFM) | Single or multi-select |
+| SGI (RGB) | Single or multi-select |
+| HDR (Radiance RGBE) | Single or multi-select |
 
 ## Requirements
 

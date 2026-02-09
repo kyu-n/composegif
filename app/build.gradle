@@ -9,7 +9,17 @@ repositories {
 dependencies {
     implementation libs.commons.imaging
     implementation libs.flatlaf
+    implementation libs.twelvemonkeys.imageio.bmp
+    implementation libs.twelvemonkeys.imageio.hdr
+    implementation libs.twelvemonkeys.imageio.icns
+    implementation libs.twelvemonkeys.imageio.pcx
+    implementation libs.twelvemonkeys.imageio.pict
+    implementation libs.twelvemonkeys.imageio.pnm
     implementation libs.twelvemonkeys.imageio.psd
+    implementation libs.twelvemonkeys.imageio.sgi
+    implementation libs.twelvemonkeys.imageio.tga
+    implementation libs.twelvemonkeys.imageio.tiff
+    implementation libs.twelvemonkeys.imageio.webp
 
     testImplementation libs.junit.jupiter
     testRuntimeOnly 'org.junit.platform:junit-platform-launcher'

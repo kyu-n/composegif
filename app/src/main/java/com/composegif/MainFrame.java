@@ -393,7 +393,10 @@ public class MainFrame extends JFrame
 		chooser.setMultiSelectionEnabled(true);
 		chooser.setDialogTitle("Select frame files (" + ls.name + ")");
 		chooser.setFileFilter(new FileNameExtensionFilter(
-				"Images (PNG, APNG, GIF, BMP, JPEG)", "png", "apng", "gif", "bmp", "jpg", "jpeg"));
+				"Images", "png", "apng", "gif", "bmp", "jpg", "jpeg",
+				"tga", "tiff", "tif", "webp", "ico", "cur", "icns",
+				"pcx", "dcx", "pnm", "pbm", "pgm", "ppm", "pam", "pfm",
+				"sgi", "rgb", "hdr", "pict", "pct"));
 		if (lastDirectory != null)
 		{
 			chooser.setCurrentDirectory(lastDirectory);
